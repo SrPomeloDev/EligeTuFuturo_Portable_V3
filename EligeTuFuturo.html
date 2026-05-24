@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Elige Tu Futuro</title>
+    <meta name="description" content="Plataforma para encontrar universidades e institutos, comparar carreras y realizar test vocacionales.">
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;800&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="background-effects">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+
+    <nav class="glass-nav">
+        <div class="logo">
+            <span class="gradient-text">Elige Tu Futuro</span>
+        </div>
+        <ul class="nav-links" id="enlaces-nav">
+            <li><a href="#" data-ruta="inicio">Inicio</a></li>
+            <li><a href="#" data-ruta="explorar">Explorar</a></li>
+            <li><a href="#" data-ruta="comparar">Comparar <span id="contador-comparar" class="badge">0</span></a></li>
+            <li><a href="#" data-ruta="favoritos">Favoritos <span id="contador-favoritos" class="badge">0</span></a></li>
+            <li><a href="#" data-ruta="test">Test Vocacional</a></li>
+            <li><a href="#" data-ruta="consulta">Consultar</a></li>
+        </ul>
+        <button class="theme-toggle" id="btn-theme-toggle" aria-label="Cambiar tema claro/oscuro" title="Cambiar tema">🌙</button>
+        <div class="mobile-menu-btn" id="btn-menu-movil" aria-expanded="false">☰</div>
+    </nav>
+
+    <main id="app-container">
+
+        <!-- INICIO -->
+        <section id="inicio" class="view vista activa">
+            <div class="hero">
+                <p class="hero-eyebrow">Santa Cruz de la Sierra</p>
+                <h1 class="hero-title">Tu futuro empieza <span class="gradient-text">aquí.</span></h1>
+                <p class="hero-subtitle">Explora universidades e institutos, compara carreras y descubre tu vocación — todo en un solo lugar.</p>
+                <div class="hero-actions">
+                    <button class="btn btn-primary" onclick="app.navegar('explorar')">Explorar Opciones</button>
+                    <button class="btn btn-secondary" onclick="app.navegar('test')">Test Vocacional</button>
+                </div>
+            </div>
+            <div class="stats-container">
+                <div class="stat-card glass-panel">
+                    <h3 id="stat-instituciones">—</h3>
+                    <p>Instituciones</p>
+                </div>
+                <div class="stat-card glass-panel">
+                    <h3 id="stat-carreras">—</h3>
+                    <p>Carreras</p>
+                </div>
+                <div class="stat-card glass-panel">
+                    <h3>100%</h3>
+                    <p>Gratis</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- EXPLORAR -->
+        <section id="explorar" class="view vista">
+            <div class="section-header">
+                <h2>Explorar <span class="gradient-text">Instituciones</span></h2>
+            </div>
+            <div class="filters-container glass-panel">
+                <div class="filter-group">
+                    <label for="input-busqueda">Buscar</label>
+                    <input type="text" id="input-busqueda" placeholder="Medicina, UCEBOL...">
+                </div>
+                <div class="filter-group">
+                    <label for="filtro-tipo">Tipo</label>
+                    <select id="filtro-tipo">
+                        <option value="">Todos</option>
+                        <option value="Universidad">Universidad</option>
+                        <option value="Instituto">Instituto</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="filtro-modalidad">Modalidad</label>
+                    <select id="filtro-modalidad">
+                        <option value="">Todos</option>
+                        <option value="Presencial">Presencial</option>
+                        <option value="Virtual">Virtual</option>
+                        <option value="Semi-presencial">Semi-presencial</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="filtro-precio">Precio máximo (Bs)</label>
+                    <input type="number" id="filtro-precio" placeholder="1500">
+                </div>
+                <div class="filter-group filter-group-btn">
+                    <button class="btn btn-secondary" onclick="app.limpiarFiltros()">Limpiar</button>
+                </div>
+            </div>
+            <div id="contador-resultados" class="results-info"></div>
+            <div id="grilla-instituciones" class="cards-grid"></div>
+        </section>
+
+        <!-- COMPARAR -->
+        <section id="comparar" class="view vista">
+            <div class="section-header">
+                <h2>Comparar <span class="gradient-text">Opciones</span></h2>
+                <p class="section-sub">Selecciona hasta 3 instituciones desde Explorar para compararlas.</p>
+            </div>
+            <div id="tabla-comparacion-wrapper" class="compare-grid"></div>
+            <div id="comparar-vacio" class="empty-state">
+                <p>No tienes instituciones seleccionadas para comparar.</p>
+                <button class="btn btn-primary" onclick="app.navegar('explorar')">Ir a Explorar</button>
+            </div>
+        </section>
+
+        <!-- FAVORITOS -->
+        <section id="favoritos" class="view vista">
+            <div class="flex-between">
+                <h2>Me llama la <span class="gradient-text">atención</span></h2>
+                <button class="btn btn-secondary" onclick="app.exportarPDF()">Exportar PDF</button>
+            </div>
+            <div id="contenido-favoritos" class="exportable-area">
+                <div id="grilla-favoritos" class="cards-grid"></div>
+                <div id="favoritos-vacio" class="empty-state">
+                    <p>Aún no guardaste ninguna institución.</p>
+                    <button class="btn btn-primary" onclick="app.navegar('explorar')">Descubrir Opciones</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- TEST VOCACIONAL -->
+        <section id="test" class="view vista">
+            <div class="test-intro" id="test-intro">
+                <h2>Descubre tu <span class="gradient-text">Vocación</span></h2>
+                <p class="section-sub">Responde 8 preguntas y recibe recomendaciones personalizadas.</p>
+                <button class="btn btn-primary" onclick="app.iniciarTest()">Comenzar Test</button>
+            </div>
+            <div class="test-question-container glass-panel" id="contenedor-test" style="display:none;">
+                <h3 id="texto-pregunta"></h3>
+                <div id="contenedor-opciones" class="options-grid"></div>
+                <div class="progress-bar">
+                    <div id="relleno-progreso" class="progress-fill"></div>
+                </div>
+                <small id="num-pregunta" class="progress-label"></small>
+            </div>
+            <div id="resultados-test" class="test-results" style="display:none;">
+                <h2>Tu perfil: <span id="resultado-perfil" class="gradient-text"></span></h2>
+                <p id="descripcion-perfil"></p>
+                <h3>Carreras sugeridas</h3>
+                <div id="carreras-recomendadas" class="cards-grid"></div>
+                <button class="btn btn-secondary mt-2" onclick="app.reiniciarTest()">Repetir test</button>
+            </div>
+        </section>
+
+        <!-- CONSULTA -->
+        <section id="consulta" class="view vista">
+            <div class="section-header">
+                <h2>Hacer una <span class="gradient-text">Consulta</span></h2>
+                <p class="section-sub">Completa el formulario y te respondemos en 24–48 horas.</p>
+            </div>
+            <div class="form-wrapper glass-panel">
+                <form id="formulario-consulta" novalidate>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="f-nombre">Nombre completo *</label>
+                            <input type="text" id="f-nombre" placeholder="Tu nombre">
+                            <span class="error-campo" id="error-nombre" hidden></span>
+                        </div>
+                        <div class="form-group">
+                            <label for="f-telefono">Teléfono *</label>
+                            <input type="tel" id="f-telefono" placeholder="Ej. 70000000">
+                            <span class="error-campo" id="error-telefono" hidden></span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="f-email">Correo electrónico (opcional)</label>
+                        <input type="email" id="f-email" placeholder="tu@correo.com">
+                        <span class="error-campo" id="error-email" hidden></span>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="f-institucion">Institución de interés</label>
+                            <select id="f-institucion">
+                                <option value="">— Selecciona una —</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="f-carrera">Carrera de interés</label>
+                            <input type="text" id="f-carrera" placeholder="Ej. Ingeniería">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="f-mensaje">Mensaje *</label>
+                        <textarea id="f-mensaje" rows="4" placeholder="¿Qué te gustaría saber?"></textarea>
+                        <span class="error-campo" id="error-mensaje" hidden></span>
+                    </div>
+                    <div class="form-group form-check">
+                        <label>
+                            <input type="checkbox" id="f-consentimiento">
+                            Acepto que mis datos se usen para responder esta consulta.
+                        </label>
+                        <span class="error-campo" id="error-consentimiento" hidden></span>
+                    </div>
+                    <div id="msg-formulario" class="msg-formulario"></div>
+                    <button type="submit" class="btn btn-primary btn-full">
+                        <span id="texto-btn-enviar">📨 Enviar Consulta</span>
+                    </button>
+                </form>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Modal detalles -->
+    <div id="modal-detalles" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-modal">
+        <div class="modal-content glass-panel">
+            <span class="close-btn" onclick="app.cerrarModal()" aria-label="Cerrar">&times;</span>
+            <div id="cuerpo-modal"></div>
+        </div>
+    </div>
+
+    <!-- Toast container -->
+    <div id="contenedor-toast" class="toast-container" aria-live="polite"></div>
+ <script src="datos.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
