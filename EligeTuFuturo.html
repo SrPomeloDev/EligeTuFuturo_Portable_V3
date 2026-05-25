@@ -27,7 +27,11 @@
             <li><a href="#" data-ruta="favoritos">Favoritos <span id="contador-favoritos" class="badge">0</span></a></li>
             <li><a href="#" data-ruta="test">Test Vocacional</a></li>
             <li><a href="#" data-ruta="consulta">Consultar</a></li>
+            <li><a href="#" data-ruta="admin">Editor Excel 📊</a></li>
         </ul>
+        <div class="status-bar">
+            <span id="conexion-status" class="status-indicator" title="Estado de conexión">🟢 En línea</span>
+        </div>
         <button class="theme-toggle" id="btn-theme-toggle" aria-label="Cambiar tema claro/oscuro" title="Cambiar tema">🌙</button>
         <div class="mobile-menu-btn" id="btn-menu-movil" aria-expanded="false">☰</div>
     </nav>
@@ -209,6 +213,84 @@
             </div>
         </section>
 
+        <!-- EDITOR EXCEL & ADMIN -->
+        <section id="admin" class="view vista">
+            <div class="section-header flex-between">
+                <div>
+                    <h2>Panel de <span class="gradient-text">Administración Excel</span></h2>
+                    <p class="section-sub">Gestiona tus instituciones y consultas de forma interactiva, como en una hoja de cálculo.</p>
+                </div>
+                <div class="admin-tabs">
+                    <button class="btn btn-secondary btn-admin-tab activo" onclick="app.cambiarSubVistaAdmin('excel')">📊 Editor Excel</button>
+                    <button class="btn btn-secondary btn-admin-tab" onclick="app.cambiarSubVistaAdmin('consultas')">📩 Consultas Recibidas</button>
+                </div>
+            </div>
+
+            <!-- Sub-vista 1: Editor Excel -->
+            <div id="subvista-admin-excel" class="admin-subview">
+                <div class="excel-toolbar glass-panel flex-between" style="margin-bottom: 1rem; padding: 1rem;">
+                    <div class="toolbar-left">
+                        <button class="btn btn-primary" onclick="app.agregarFilaExcel()">➕ Añadir Fila</button>
+                        <button class="btn btn-secondary" onclick="app.recargarDatosExcel()">🔄 Recargar</button>
+                    </div>
+                    <div class="toolbar-right">
+                        <span id="cambios-pendientes-badge" class="badge" style="background:#fff7ed; color:#ea580c; display:none; margin-right:1rem;">0 cambios pendientes</span>
+                        <button id="btn-guardar-excel" class="btn btn-acento" onclick="app.guardarCambiosExcel()" disabled>💾 Guardar Cambios</button>
+                    </div>
+                </div>
+
+                <div class="excel-grid-container glass-panel" style="padding:0; overflow:hidden;">
+                    <div class="excel-scroll-wrapper" style="overflow-x:auto; overflow-y:auto; max-height: 550px;">
+                        <table id="tabla-excel-instituciones" class="tabla-excel">
+                            <thead>
+                                <tr id="tabla-excel-cabeceras">
+                                    <!-- Cabeceras generadas dinámicamente -->
+                                </tr>
+                            </thead>
+                            <tbody id="tabla-excel-cuerpo">
+                                <!-- Filas generadas dinámicamente -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div style="margin-top: 0.8rem; font-size: 0.82rem; color: var(--text-muted);">
+                    💡 <strong>Tip:</strong> Haz doble clic en cualquier celda para editar su contenido. Las columnas como <em>Carreras</em> y <em>Tags</em> deben estar separadas por comas. Para eliminar una fila, haz clic en el botón 🗑️ al inicio de la fila.
+                </div>
+            </div>
+
+            <!-- Sub-vista 2: Consultas Recibidas -->
+            <div id="subvista-admin-consultas" class="admin-subview" style="display:none;">
+                <div class="excel-toolbar glass-panel flex-between" style="margin-bottom: 1rem; padding: 1rem;">
+                    <div class="toolbar-left">
+                        <button class="btn btn-secondary" onclick="app.recargarConsultasAdmin()">🔄 Recargar Consultas</button>
+                    </div>
+                </div>
+
+                <div class="excel-grid-container glass-panel" style="padding:0; overflow:hidden;">
+                    <div class="excel-scroll-wrapper" style="overflow-x:auto;">
+                        <table class="tabla-excel">
+                            <thead>
+                                <tr>
+                                    <th>Acción</th>
+                                    <th>Fecha</th>
+                                    <th>Nombre</th>
+                                    <th>Teléfono</th>
+                                    <th>Email</th>
+                                    <th>Institución de Interés</th>
+                                    <th>Carrera</th>
+                                    <th>Mensaje</th>
+                                    <th>Consentimiento</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabla-consultas-cuerpo">
+                                <!-- Consultas cargadas dinámicamente -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
     </main>
 
     <!-- Modal detalles -->
@@ -221,7 +303,10 @@
 
     <!-- Toast container -->
     <div id="contenedor-toast" class="toast-container" aria-live="polite"></div>
- <script src="datos.js"></script>
+    
+    <!-- Supabase SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
+    <script src="datos.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
