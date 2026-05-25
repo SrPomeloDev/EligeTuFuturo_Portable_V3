@@ -1,15 +1,33 @@
 'use strict';
 
 // =============================================
-// CONFIGURACIÓN
+// CONFIGURACIÓN DE SUPABASE
 // =============================================
+// ⚠️ IMPORTANTE: Si usas la clave de Supabase, prefiere la anon public de tipo JWT (empieza con eyJ...)
+// Si utilizas la nueva clave sb_publishable_*, el sistema funcionará localmente y se conectará cuando el token sea válido.
+const SUPABASE_URL = "https://fggqxgklnnodkenewvpe.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_0TrsnUvJuSodbz49-k_5KA_tdQ34ixb";
+
+let supabaseClient = null;
+let _supabaseError = null;
+
+function getSupabaseClient() {
+    if (!supabaseClient && window.supabase && !_supabaseError) {
+        try {
+            supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+                auth: { persistSession: false }
+            });
+            console.log("✓ Supabase Client inicializado");
+        } catch (e) {
+            _supabaseError = e.message;
+            console.error("Error al inicializar Supabase:", e);
+        }
+    }
+    return supabaseClient;
+}
+
 const CONFIG = {
-    // URL del Web App de Google Apps Script (deploy como Web app)
-    urlLecturaSheets: "https://script.google.com/macros/s/AKfycbwYgXApwfhd97O5vy-PVddaYSiDAwvkNKSxqptS5Thwysn0HSuCc1_2ooreeNhFrMK-Cw/exec",
-    // URL para enviar consultas (puede ser la misma si el script lo maneja)
-    urlConsultasSheets: "https://script.google.com/macros/s/AKfycbwYgXApwfhd97O5vy-PVddaYSiDAwvkNKSxqptS5Thwysn0HSuCc1_2ooreeNhFrMK-Cw/exec",
-    fechaActualizacion: "Mayo 2025",
-    // tiempo de espera aumentado para conexiones lentas (ms)
+    fechaActualizacion: "Mayo 2026",
     tiempoEsperaMs: 10000,
 };
 
@@ -390,124 +408,321 @@ const PERFILES_VOCACIONALES = {
 };
 
 // =============================================
-// FUNCIONES DE CARGA Y TRANSFORMACIÓN
+// CACHÉ Y ALMACENAMIENTO LOCAL
+// =============================================
+const CACHE_KEY = 'etf_datos_cache';
+const CACHE_FECHA_KEY = 'etf_datos_fecha';
+const PENDING_WRITES_KEY = 'etf_pending_writes';
+const PENDING_DELETES_KEY = 'etf_pending_deletes';
+
+function _guardarCacheLocal(instituciones) {
+    try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify(instituciones));
+        localStorage.setItem(CACHE_FECHA_KEY, new Date().toISOString());
+    } catch (_) {}
+}
+
+function _leerCacheLocal() {
+    try {
+        const raw = localStorage.getItem(CACHE_KEY);
+        if (!raw) return null;
+        const instituciones = JSON.parse(raw);
+        if (Array.isArray(instituciones) && instituciones.length > 0) return instituciones;
+    } catch (_) {}
+    return null;
+}
+
+function _leerPendingWrites() {
+    try { return JSON.parse(localStorage.getItem(PENDING_WRITES_KEY) || '[]'); } catch (_) { return []; }
+}
+function _guardarPendingWrites(items) {
+    try { localStorage.setItem(PENDING_WRITES_KEY, JSON.stringify(items)); } catch (_) {}
+}
+function _leerPendingDeletes() {
+    try { return JSON.parse(localStorage.getItem(PENDING_DELETES_KEY) || '[]'); } catch (_) { return []; }
+}
+function _guardarPendingDeletes(ids) {
+    try { localStorage.setItem(PENDING_DELETES_KEY, JSON.stringify(ids)); } catch (_) {}
+}
+
+// =============================================
+// NORMALIZACIÓN DE DATOS (MAPPING DB <-> FRONT)
 // =============================================
 
-function _esArrayDeObjetosConClavesVacias(datos) {
-    if (!Array.isArray(datos) || datos.length === 0) return false;
-    return datos.every(item => {
-        return item && typeof item === 'object' && !Array.isArray(item) &&
-            Object.keys(item).length > 0 &&
-            Object.keys(item).every(key => key.trim() === '');
-    });
-}
-function _arrayDeArraysAObjetos(datos) {
-    // Si los datos ya vienen como objetos (lo cual es correcto ahora), los retornamos directo
-    if (datos && !Array.isArray(datos[0])) {
-        return datos; 
+function normalizarDesdeSupabase(dbRow) {
+    let carreras = [];
+    try {
+        carreras = typeof dbRow.carreras === 'string' ? JSON.parse(dbRow.carreras) : (dbRow.carreras || []);
+    } catch (_) {
+        carreras = dbRow.carreras || [];
     }
 
-    // Si los datos no son un array, no podemos procesarlos
-    if (!Array.isArray(datos) || datos.length < 2) return null;
-
-    const cabeceras = datos[0].map(c => String(c || '').trim());
-    if (cabeceras.every(c => c === '')) return null;
-
-    return datos.slice(1).map(fila => {
-        const obj = {};
-        cabeceras.forEach((clave, index) => {
-            const nombreClave = clave || `columna_${index}`;
-            obj[nombreClave] = fila[index] !== undefined ? fila[index] : '';
-        });
-        return obj;
-    });
+    return {
+        id: dbRow.id,
+        nombre: dbRow.nombre || '',
+        sigla: dbRow.sigla || '',
+        tipo: dbRow.tipo || 'Universidad',
+        ubicacion: dbRow.ubicacion || '',
+        descripcion: dbRow.descripcion || '',
+        telefono: dbRow.telefono || '',
+        email: dbRow.email || '',
+        web: dbRow.web || '',
+        LinkResenas: dbRow.link_resenas || '',
+        costoMensual: parseFloat(dbRow.costo_mensual || 0),
+        costoInscripcion: parseFloat(dbRow.costo_inscripcion || 0),
+        carreras: carreras,
+        becas: dbRow.becas === true,
+        modalidad: dbRow.modalidad || 'Presencial',
+        acreditacion: dbRow.acreditacion || '',
+        tags: dbRow.tags || [],
+        valoracion: parseFloat(dbRow.valoracion || 4.0),
+        numResenas: parseInt(dbRow.num_resenas || 0)
+    };
 }
-async function cargarDatos() {
-    if (CONFIG.urlLecturaSheets) {
-        try {
-            const controlador = new AbortController();
-            const idTimeout = setTimeout(() => controlador.abort(), CONFIG.tiempoEsperaMs);
 
-            const respuesta = await fetch(CONFIG.urlLecturaSheets, {
-                signal: controlador.signal,
-                mode: 'cors'
-            });
-            clearTimeout(idTimeout);
+function desnormalizarParaSupabase(frontRow) {
+    const row = {
+        nombre: frontRow.nombre || '',
+        sigla: frontRow.sigla || '',
+        tipo: frontRow.tipo || 'Universidad',
+        ubicacion: frontRow.ubicacion || '',
+        descripcion: frontRow.descripcion || '',
+        telefono: frontRow.telefono || '',
+        email: frontRow.email || '',
+        web: frontRow.web || '',
+        link_resenas: frontRow.LinkResenas || '',
+        costo_mensual: parseFloat(frontRow.costoMensual || 0),
+        costo_inscripcion: parseFloat(frontRow.costoInscripcion || 0),
+        carreras: Array.isArray(frontRow.carreras) ? frontRow.carreras : [],
+        becas: frontRow.becas === true,
+        modalidad: frontRow.modalidad || 'Presencial',
+        acreditacion: frontRow.acreditacion || '',
+        tags: Array.isArray(frontRow.tags) ? frontRow.tags : [],
+        valoracion: parseFloat(frontRow.valoracion || 4.0),
+        num_resenas: parseInt(frontRow.numResenas || 0)
+    };
 
-            if (!respuesta.ok) throw new Error('Respuesta no válida del servidor');
+    if (frontRow.id && !String(frontRow.id).startsWith('temp-')) {
+        row.id = parseInt(frontRow.id);
+    }
+    return row;
+}
 
-            const datos = await respuesta.json();
+// =============================================
+// SISTEMA OFFLINE-FIRST: ECOREGISTROS Y COLA
+// =============================================
 
-            if (Array.isArray(datos) && datos.length > 0) {
-                if (_esArrayDeObjetosConClavesVacias(datos)) {
-                    console.warn('La respuesta de Google Apps Script tiene claves vacías. Usando fallback local.');
-                    return { instituciones: INSTITUCIONES_FALLBACK, fuente: 'offline' };
-                }
+function hayPendientes() {
+    return _leerPendingWrites().length > 0 || _leerPendingDeletes().length > 0;
+}
 
-                const datosComoTabla = _arrayDeArraysAObjetos(datos);
-                if (datosComoTabla) {
-                    return { instituciones: transformarDatosSheet(datosComoTabla), fuente: 'online' };
-                }
+async function sincronizarPendientes() {
+    const client = getSupabaseClient();
+    if (!client || !navigator.onLine) return false;
 
-                return { instituciones: transformarDatosSheet(datos), fuente: 'online' };
+    const pendingWrites = _leerPendingWrites();
+    const pendingDeletes = _leerPendingDeletes();
+    if (pendingWrites.length === 0 && pendingDeletes.length === 0) return true;
+
+    console.log(`🔄 Sincronizando pendientes con Supabase: ${pendingWrites.length} escrituras, ${pendingDeletes.length} eliminaciones`);
+
+    try {
+        // 1. Procesar eliminaciones
+        if (pendingDeletes.length > 0) {
+            const realIds = pendingDeletes.filter(id => !String(id).startsWith('temp-')).map(Number);
+            if (realIds.length > 0) {
+                const { error } = await client.from('instituciones').delete().in('id', realIds);
+                if (error) throw error;
             }
-        } catch (error) {
-            console.warn('Google Sheets no disponible. Usando datos locales.', error.message);
+            _guardarPendingDeletes([]);
+        }
+
+        // 2. Procesar inserciones/actualizaciones (upsert)
+        if (pendingWrites.length > 0) {
+            const filasSupabase = pendingWrites.map(desnormalizarParaSupabase);
+            const { error } = await client.from('instituciones').upsert(filasSupabase);
+            if (error) throw error;
+            _guardarPendingWrites([]);
+        }
+
+        console.log('✓ Sincronización exitosa con Supabase');
+        window.dispatchEvent(new CustomEvent('etf:sincronizado'));
+        return true;
+    } catch (err) {
+        console.warn('⚠️ Fallo la sincronización automática:', err.message || err);
+        return false;
+    }
+}
+
+// Auto-sincronizar al volver a estar online
+window.addEventListener('online', () => {
+    console.log('🌐 Conexión detectada - Iniciando sincronización en background...');
+    sincronizarPendientes();
+});
+
+// =============================================
+// MÉTODOS DE DATOS PRINCIPALES (OFFLINE-FIRST)
+// =============================================
+
+async function cargarDatos() {
+    // 1. Retornar cache local inmediatamente (Offline-first rápido)
+    const cacheLocal = _leerCacheLocal();
+
+    // 2. En background, si estamos online, sincronizar y refrescar desde Supabase
+    if (navigator.onLine) {
+        _refrescarCacheEnBackground();
+    }
+
+    if (cacheLocal && cacheLocal.length > 0) {
+        return { instituciones: cacheLocal, fuente: hayPendientes() ? 'cache-pendiente' : 'cache' };
+    }
+
+    // 3. Primer inicio sin cache: intento síncrono si hay red
+    const client = getSupabaseClient();
+    if (client && navigator.onLine) {
+        try {
+            const { data, error } = await client.from('instituciones').select('*').order('id', { ascending: true });
+            if (!error && Array.isArray(data) && data.length > 0) {
+                const instituciones = data.map(normalizarDesdeSupabase);
+                _guardarCacheLocal(instituciones);
+                return { instituciones, fuente: 'online' };
+            }
+        } catch (err) {
+            console.warn('Error cargando datos en primer inicio:', err);
         }
     }
+
+    // 4. Último recurso: Datos fallback hardcodeados
+    console.warn('Cargando base de datos fallback local.');
     return { instituciones: INSTITUCIONES_FALLBACK, fuente: 'offline' };
 }
 
-function transformarDatosSheet(datos) {
-    return datos.map((fila, indice) => ({
-        id: indice + 1,
-        nombre: fila.Nombre || fila.nombre || '',
-        sigla: fila.Sigla || fila.sigla || '',
-        tipo: fila.Tipo || fila.tipo || 'Universidad',
-        ubicacion: fila.Ubicacion || fila.ubicacion || 'Bolivia',
-        descripcion: fila.Descripcion || fila.descripcion || '',
-        telefono: fila.Telefono || fila.telefono || '',
-        email: fila.Email || fila.email || '',
-        web: fila.Web || fila.web || '',
-        LinkResenas: fila.LinkResenas || fila.linkResenas || '', // 👈 AGREGA ESTA LÍNEA EXACTAMENTE ASÍ
-        costoMensual: parseFloat(fila.CostoMensual || fila.costoMensual || 0),
-        costoInscripcion: parseFloat(fila.CostoInscripcion || fila.costoInscripcion || 0),
-        carreras: _parsearCarreras(fila.Carreras || fila.carreras || ''),
-        becas: String(fila.Becas || fila.becas || '').toLowerCase() === 'sí',
-        modalidad: fila.Modalidad || fila.modalidad || 'Presencial',
-        acreditacion: fila.Acreditacion || fila.acreditacion || '',
-        tags: _parsearLista(fila.Tags || fila.tags || ''),
-        valoracion: parseFloat(fila.Valoracion || fila.valoracion || 4.0),
-        numResenas: parseInt(fila.NumResenas || fila.numResenas || 0),
-        resenas: [],
-    }));
-}
+async function _refrescarCacheEnBackground() {
+    try {
+        await sincronizarPendientes();
+        const client = getSupabaseClient();
+        if (!client) return;
 
-function _parsearCarreras(valor) {
-    if (!valor) return [];
-    if (Array.isArray(valor)) return valor;
-    return valor.split(',').map(c => ({ nombre: c.trim(), duracion: '', area: '' }));
-}
-
-function _parsearLista(valor) {
-    if (!valor) return [];
-    if (Array.isArray(valor)) return valor;
-    return valor.split(',').map(t => t.trim().toLowerCase());
+        const { data, error } = await client.from('instituciones').select('*').order('id', { ascending: true });
+        if (!error && Array.isArray(data) && data.length > 0) {
+            const instituciones = data.map(normalizarDesdeSupabase);
+            _guardarCacheLocal(instituciones);
+            window.dispatchEvent(new CustomEvent('etf:datosFrescos', { detail: { instituciones } }));
+            console.log('✓ Cache refrescado desde Supabase en background');
+        }
+    } catch (err) {
+        console.warn('No se pudo refrescar cache en background:', err);
+    }
 }
 
 async function enviarConsulta(datos) {
-    if (!CONFIG.urlConsultasSheets) {
-        console.log('Consulta (sin URL de Sheets configurada):', datos);
-        // Simular éxito en desarrollo
-        return new Promise(resolve => setTimeout(() => resolve({ exito: true }), 800));
+    const row = {
+        nombre: datos.nombre,
+        telefono: datos.telefono,
+        email: datos.email || null,
+        institucion: datos.institucion || null,
+        carrera: datos.carrera || null,
+        mensaje: datos.mensaje,
+        consentimiento: datos.consentimiento === true
+    };
+
+    const client = getSupabaseClient();
+    if (!client || !navigator.onLine) {
+        // Almacenar localmente en cola de consultas
+        try {
+            const consultas = JSON.parse(localStorage.getItem('etf_pending_consultas') || '[]');
+            consultas.push({ ...row, fecha_local: new Date().toISOString() });
+            localStorage.setItem('etf_pending_consultas', JSON.stringify(consultas));
+            console.log('✓ Consulta encolada localmente (modo offline)');
+            return { exito: true, guardadaLocalmente: true };
+        } catch (_) {
+            return { exito: false, error: "Almacenamiento local lleno" };
+        }
     }
+
     try {
-        const params = new URLSearchParams({ ...datos, accion: 'nuevaConsulta' });
-        const respuesta = await fetch(`${CONFIG.urlConsultasSheets}?${params.toString()}`);
-        await respuesta.json();
+        const { error } = await client.from('consultas').insert([row]);
+        if (error) throw error;
         return { exito: true };
     } catch (error) {
-        console.error('Error al enviar consulta:', error);
+        console.error('Error al enviar consulta a Supabase:', error);
         return { exito: false, error: error.message };
+    }
+}
+
+// =============================================
+// ADMINISTRACIÓN: EXCEL Y CONSULTAS
+// =============================================
+
+async function guardarCambiosExcel(institucionesModificadas, idsEliminados) {
+    // 1. Modificar cache local inmediatamente
+    let cacheActual = _leerCacheLocal() || [...INSTITUCIONES_FALLBACK];
+
+    // Eliminar
+    const idsElimSet = new Set(idsEliminados.map(String));
+    cacheActual = cacheActual.filter(inst => !idsElimSet.has(String(inst.id)));
+
+    // Modificar / Insertar
+    for (const inst of institucionesModificadas) {
+        const idx = cacheActual.findIndex(i => String(i.id) === String(inst.id));
+        if (idx >= 0) {
+            cacheActual[idx] = inst;
+        } else {
+            cacheActual.push(inst);
+        }
+    }
+    _guardarCacheLocal(cacheActual);
+
+    // 2. Guardar en colas pendientes
+    if (idsEliminados.length > 0) {
+        const deletes = [...new Set([..._leerPendingDeletes(), ...idsEliminados.map(String)])];
+        _guardarPendingDeletes(deletes);
+    }
+
+    if (institucionesModificadas.length > 0) {
+        const writes = _leerPendingWrites();
+        for (const inst of institucionesModificadas) {
+            const idx = writes.findIndex(w => String(w.id) === String(inst.id));
+            if (idx >= 0) { writes[idx] = inst; } else { writes.push(inst); }
+        }
+        _guardarPendingWrites(writes);
+    }
+
+    // 3. Sincronizar con Supabase si hay red
+    if (navigator.onLine) {
+        const exito = await sincronizarPendientes();
+        if (exito) {
+            await _refrescarCacheEnBackground();
+        }
+    } else {
+        console.log('✓ Cambios guardados localmente. Sincronizarán al volver online.');
+    }
+
+    return true;
+}
+
+async function cargarConsultasAdmin() {
+    const client = getSupabaseClient();
+    if (!client) return [];
+    try {
+        const { data, error } = await client.from('consultas').select('*').order('fecha', { ascending: false });
+        if (error) throw error;
+        return data || [];
+    } catch (error) {
+        console.error('Error al obtener consultas:', error);
+        return [];
+    }
+}
+
+async function eliminarConsultaAdmin(id) {
+    const client = getSupabaseClient();
+    if (!client) return false;
+    try {
+        const { error } = await client.from('consultas').delete().eq('id', id);
+        if (error) throw error;
+        return true;
+    } catch (error) {
+        console.error('Error al eliminar consulta:', error);
+        return false;
     }
 }
