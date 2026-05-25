@@ -11,6 +11,12 @@ const estado = {
     puntajesTest: { ciencias: 0, social: 0, creativo: 0, negocios: 0, tecnologia: 0 },
     preguntaActual: 0,
     cargando: true,
+    excel: {
+        datos: [],
+        cambiosPendientes: new Map(),
+        idsEliminados: new Set(),
+        subVista: 'excel'
+    }
 };
 
 // =============================================
@@ -38,6 +44,17 @@ const app = {
                 estado.instituciones = resultado;
             } else if (resultado && resultado.instituciones) {
                 estado.instituciones = resultado.instituciones;
+                // Actualizar indicador según fuente
+                const indicador = document.getElementById('conexion-status');
+                if (indicador) {
+                    if (resultado.fuente === 'online') {
+                        indicador.textContent = '🟢 En línea';
+                    } else if (resultado.fuente === 'cache') {
+                        indicador.textContent = '🟡 Caché (sin internet)';
+                    } else {
+                        indicador.textContent = '🔴 Sin conexión';
+                    }
+                }
             } else {
                 estado.instituciones = [];
             }
@@ -91,6 +108,7 @@ const app = {
             explorar: () => this._aplicarFiltros(),
             comparar: () => this.renderizarComparar(),
             favoritos: () => this.renderizarFavoritos(),
+            admin: () => this.inicializarExcelAdmin()
         };
         if (acciones[ruta]) acciones[ruta]();
 
@@ -399,9 +417,15 @@ const app = {
                 ${c.area ? `<span class="carrera-area">${c.area}</span>` : ''}
             </div>`).join('');
 
+        // Indicador de conexión
+        const indicadorConexion = navigator.onLine ? '🟢 En línea' : '🔴 Sin conexión';
+
         let resenasHTML = '';
+        
+        // Envolver reseñas en un recuadro elegante
+        let contenidoResenas = '';
         if (inst.resenas?.length) {
-            resenasHTML = inst.resenas.map(r => `
+            contenidoResenas = inst.resenas.map(r => `
                 <div class="resena-item">
                     <div class="resena-cab">
                         <strong>${r.autor}</strong>
@@ -410,16 +434,28 @@ const app = {
                     <p>${r.texto}</p>
                 </div>`).join('');
         } else {
-            resenasHTML = '<p class="sin-resenas">Sin reseñas disponibles.</p>';
+            contenidoResenas = '<p class="sin-resenas">Sin reseñas disponibles.</p>';
         }
-
+        
+        // Mostrar reseñas en un recuadro elegante con indicador
+        resenasHTML = `
+            <div class="bloque-resenas-container">
+                <div class="resenas-header">
+                    <span class="resenas-titulo">💬 Reseñas y Opiniones</span>
+                    <span class="indicador-conexion">${indicadorConexion}</span>
+                </div>
+                <div class="resenas-contenido">
+                    ${contenidoResenas}
+                </div>
+            </div>`;
+        
         if (inst.LinkResenas) {
-            // Esto renderizará el mapa interactivo directamente dentro del modal de tu web
             resenasHTML += `
-                <div class="modal-bloque-mapa" style="margin-top: 15px;">
-                    <div class="contenedor-iframe-maps" style="width: 100%; overflow: hidden; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-                        ${inst.LinkResenas}
-                    </div>
+                <div class="modal-link-resenas" style="margin-top: 14px; text-align: center;">
+                    <a href="${inst.LinkResenas}" target="_blank" rel="noopener noreferrer"
+                       class="btn btn-secundario" style="display:inline-flex;align-items:center;gap:8px;">
+                        📍 Ver reseñas en Google Maps ↗
+                    </a>
                 </div>`;
         }
 
@@ -460,8 +496,7 @@ const app = {
             </div>
 
             <div class="modal-bloque">
-                <h3>💬 Reseñas</h3>
-                <div class="lista-resenas">${resenasHTML}</div>
+                ${resenasHTML}
             </div>
 
             <div class="modal-acciones">
@@ -738,6 +773,28 @@ const app = {
         // Cambio de tema
         document.getElementById('btn-theme-toggle')?.addEventListener('click', () => this.toggleTema());
 
+        // Indicador de conexión y eventos de sincronización (Supabase)
+        this._actualizarIndicadorConexion();
+        window.addEventListener('online', () => this._actualizarIndicadorConexion());
+        window.addEventListener('offline', () => this._actualizarIndicadorConexion());
+
+        window.addEventListener('etf:datosFrescos', (e) => {
+            console.log("⚡ Evento etf:datosFrescos recibido. Actualizando estado...");
+            if (e.detail && Array.isArray(e.detail.instituciones)) {
+                estado.instituciones = e.detail.instituciones;
+                estado.institucionesFiltradas = [...estado.instituciones];
+                this._actualizarEstadisticasInicio();
+                this._llenarSelectInstituciones();
+                this._refrescarVistaActual();
+            }
+            this._actualizarIndicadorConexion();
+        });
+
+        window.addEventListener('etf:sincronizado', () => {
+            this._toast('Cambios offline sincronizados con Supabase', 'exito');
+            this._actualizarIndicadorConexion();
+        });
+
         // Filtros con debounce
         const debounceFiltros = this._debounce(() => this._aplicarFiltros(), 280);
         document.getElementById('input-busqueda')?.addEventListener('input', debounceFiltros);
@@ -753,6 +810,392 @@ const app = {
 
         // Formulario de consulta
         document.getElementById('formulario-consulta')?.addEventListener('submit', e => this._enviarFormulario(e));
+    },
+
+    // ----------------------------------------
+    // MÉTODOS DEL PANEL ADMINISTRATIVO Y EDITOR EXCEL
+    // ----------------------------------------
+    
+    columnasExcel: [
+        { clave: 'acciones_fila', titulo: 'Acción', readonly: true },
+        { clave: 'id', titulo: 'ID', readonly: true },
+        { clave: 'nombre', titulo: 'Nombre *', required: true },
+        { clave: 'sigla', titulo: 'Sigla' },
+        { clave: 'tipo', titulo: 'Tipo', type: 'select', opciones: ['Universidad', 'Instituto'] },
+        { clave: 'ubicacion', titulo: 'Ubicación' },
+        { clave: 'modalidad', titulo: 'Modalidad', type: 'select', opciones: ['Presencial', 'Virtual', 'Semi-presencial'] },
+        { clave: 'costoMensual', titulo: 'Costo Mensual (Bs)', type: 'number' },
+        { clave: 'costoInscripcion', titulo: 'Costo Inscripción (Bs)', type: 'number' },
+        { clave: 'becas', titulo: 'Becas', type: 'boolean' },
+        { clave: 'acreditacion', titulo: 'Acreditación' },
+        { clave: 'carreras', titulo: 'Carreras (sep. por comas)' },
+        { clave: 'tags', titulo: 'Etiquetas/Tags (sep. por comas)' },
+        { clave: 'telefono', titulo: 'Teléfono' },
+        { clave: 'email', titulo: 'Email' },
+        { clave: 'web', titulo: 'Sitio Web' },
+        { clave: 'LinkResenas', titulo: 'Link Reseñas' },
+        { clave: 'descripcion', titulo: 'Descripción' },
+        { clave: 'valoracion', titulo: 'Valoración (1-5)', type: 'number' },
+        { clave: 'numResenas', titulo: 'Num Reseñas', type: 'number' }
+    ],
+
+    inicializarExcelAdmin() {
+        console.log('📊 Inicializando Editor Excel...');
+        estado.excel.cambiosPendientes = new Map();
+        estado.excel.idsEliminados = new Set();
+        // Hacemos una copia profunda de las instituciones de estado.instituciones
+        estado.excel.datos = JSON.parse(JSON.stringify(estado.instituciones || []));
+        
+        this.cambiarSubVistaAdmin(estado.excel.subVista || 'excel');
+        this.actualizarBadgesBotonesExcel();
+    },
+
+    cambiarSubVistaAdmin(subvista) {
+        estado.excel.subVista = subvista;
+        
+        // Manejar estilo activo en las pestañas
+        document.querySelectorAll('.btn-admin-tab').forEach(btn => {
+            btn.classList.remove('activo');
+        });
+        
+        const tabs = document.querySelectorAll('.btn-admin-tab');
+        if (subvista === 'excel' && tabs[0]) tabs[0].classList.add('activo');
+        if (subvista === 'consultas' && tabs[1]) tabs[1].classList.add('activo');
+
+        // Mostrar u ocultar las subvistas
+        const excelSection = document.getElementById('subvista-admin-excel');
+        const consultasSection = document.getElementById('subvista-admin-consultas');
+
+        if (excelSection && consultasSection) {
+            if (subvista === 'excel') {
+                excelSection.style.display = 'block';
+                consultasSection.style.display = 'none';
+                this.renderizarExcelGrid();
+            } else {
+                excelSection.style.display = 'none';
+                consultasSection.style.display = 'block';
+                this.cargarConsultasAdminUI();
+            }
+        }
+    },
+
+    renderizarExcelGrid() {
+        const cabecerasRow = document.getElementById('tabla-excel-cabeceras');
+        const cuerpoRow = document.getElementById('tabla-excel-cuerpo');
+        if (!cabecerasRow || !cuerpoRow) return;
+
+        // 1. Renderizar Cabeceras
+        cabecerasRow.innerHTML = this.columnasExcel.map(col => `
+            <th>${col.titulo}</th>
+        `).join('');
+
+        // 2. Renderizar Cuerpo de la Tabla
+        if (estado.excel.datos.length === 0) {
+            cuerpoRow.innerHTML = `
+                <tr>
+                    <td colspan="${this.columnasExcel.length}" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+                        No hay instituciones en la base de datos. Haz clic en "Añadir Fila" para comenzar.
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        cuerpoRow.innerHTML = estado.excel.datos.map(row => {
+            // Si está marcada como eliminada localmente, no la mostramos en la grilla
+            if (estado.excel.idsEliminados.has(row.id)) return '';
+
+            const celdasHTML = this.columnasExcel.map(col => {
+                const clave = col.clave;
+                let valor = row[clave] !== undefined ? row[clave] : '';
+
+                // Formatos especiales
+                if (clave === 'acciones_fila') {
+                    return `<td style="text-align:center; padding: 4px;">
+                        <button class="btn btn-sm" style="background:#fee2e2; color:#ef4444; border:none; padding:4px 8px;" onclick="app.eliminarFilaExcelGrid('${row.id}')" title="Eliminar fila">🗑️</button>
+                    </td>`;
+                }
+                
+                if (clave === 'id') {
+                    const idMostrar = String(row.id).startsWith('temp-') ? '🆕' : row.id;
+                    return `<td style="text-align:center; font-weight:700; background:var(--bg-elevated); color:var(--text-secondary);">${idMostrar}</td>`;
+                }
+
+                if (col.type === 'boolean') {
+                    const isChecked = valor === true ? 'checked' : '';
+                    return `<td style="text-align:center;">
+                        <input type="checkbox" ${isChecked} onchange="app.editarCeldaExcel('${row.id}', '${clave}', this)">
+                    </td>`;
+                }
+
+                if (col.type === 'select') {
+                    const opcionesHTML = (col.opciones || []).map(op => {
+                        const isSelected = valor === op ? 'selected' : '';
+                        return `<option value="${op}" ${isSelected}>${op}</option>`;
+                    }).join('');
+                    return `<td style="padding: 2px;">
+                        <select style="width:100%; border:none; background:transparent; color:var(--text-primary); font-family:var(--font-main); padding: 4px 6px;" onchange="app.editarCeldaExcel('${row.id}', '${clave}', this)">
+                            ${opcionesHTML}
+                        </select>
+                    </td>`;
+                }
+
+                if (clave === 'carreras') {
+                    valor = Array.isArray(valor) ? valor.map(c => c.nombre || c).join(', ') : (valor || '');
+                } else if (clave === 'tags') {
+                    valor = Array.isArray(valor) ? valor.join(', ') : (valor || '');
+                }
+
+                // Celdas normales editables (span o texto crudo)
+                const isNumeric = col.type === 'number' ? 'inputmode="decimal"' : '';
+                return `<td>
+                    <div class="celda-editable" contenteditable="true" ${isNumeric} onblur="app.editarCeldaExcel('${row.id}', '${clave}', this)">${valor}</div>
+                </td>`;
+            }).join('');
+
+            return `<tr>${celdasHTML}</tr>`;
+        }).join('');
+    },
+
+    editarCeldaExcel(rowId, clave, elemento) {
+        // Encontrar la fila correspondiente en nuestros datos de trabajo
+        const row = estado.excel.datos.find(r => String(r.id) === String(rowId));
+        if (!row) return;
+
+        let valorNuevo;
+
+        if (elemento.type === 'checkbox') {
+            valorNuevo = elemento.checked;
+        } else if (elemento.tagName === 'SELECT') {
+            valorNuevo = elemento.value;
+        } else {
+            // Es un div con contenteditable
+            valorNuevo = elemento.innerText.trim();
+        }
+
+        // Conversión de tipos según la clave
+        const colDef = this.columnasExcel.find(c => c.clave === clave);
+        if (colDef && colDef.type === 'number') {
+            valorNuevo = valorNuevo === '' ? 0 : parseFloat(valorNuevo);
+            if (isNaN(valorNuevo)) valorNuevo = 0;
+        }
+
+        if (clave === 'carreras') {
+            valorNuevo = valorNuevo === '' 
+                ? [] 
+                : valorNuevo.split(',').map(c => ({ nombre: c.trim(), duracion: '', area: '' }));
+        } else if (clave === 'tags') {
+            valorNuevo = valorNuevo === '' 
+                ? [] 
+                : valorNuevo.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+        }
+
+        // Comprobar si realmente hubo un cambio para no registrar cambios innecesarios
+        // (Conversión simple a string para arrays/objetos)
+        const valorViejoStr = typeof row[clave] === 'object' ? JSON.stringify(row[clave]) : String(row[clave]);
+        const valorNuevoStr = typeof valorNuevo === 'object' ? JSON.stringify(valorNuevo) : String(valorNuevo);
+
+        if (valorViejoStr === valorNuevoStr) return;
+
+        // Actualizar el valor en nuestra copia local de trabajo
+        row[clave] = valorNuevo;
+
+        // Registrar en los cambios pendientes
+        estado.excel.cambiosPendientes.set(rowId, row);
+        
+        this.actualizarBadgesBotonesExcel();
+    },
+
+    agregarFilaExcel() {
+        const idTemp = `temp-${Date.now()}`;
+        const nuevaFila = {
+            id: idTemp,
+            nombre: 'Nueva Institución',
+            sigla: '',
+            tipo: 'Universidad',
+            ubicacion: 'Santa Cruz de la Sierra',
+            descripcion: '',
+            telefono: '',
+            email: '',
+            web: '',
+            LinkResenas: '',
+            costoMensual: 0,
+            costoInscripcion: 0,
+            carreras: [],
+            becas: false,
+            modalidad: 'Presencial',
+            acreditacion: '',
+            tags: [],
+            valoracion: 4.0,
+            numResenas: 0
+        };
+
+        // Agregar al inicio para fácil visibilidad
+        estado.excel.datos.unshift(nuevaFila);
+        estado.excel.cambiosPendientes.set(idTemp, nuevaFila);
+
+        this.renderizarExcelGrid();
+        this.actualizarBadgesBotonesExcel();
+        this._toast('Fila nueva añadida al inicio', 'info');
+    },
+
+    eliminarFilaExcelGrid(rowId) {
+        // Si el ID es temporal (nueva fila no guardada), simplemente la removemos de la memoria
+        if (String(rowId).startsWith('temp-')) {
+            estado.excel.datos = estado.excel.datos.filter(r => String(r.id) !== String(rowId));
+            estado.excel.cambiosPendientes.delete(rowId);
+        } else {
+            // Si es un ID real de la base de datos, lo marcamos para eliminar
+            estado.excel.idsEliminados.add(parseInt(rowId));
+            // También lo removemos de cambios pendientes por si se editó antes de borrar
+            estado.excel.cambiosPendientes.delete(rowId);
+        }
+
+        this.renderizarExcelGrid();
+        this.actualizarBadgesBotonesExcel();
+        this._toast('Fila eliminada visualmente. Guarda para aplicar.', 'advertencia');
+    },
+
+    actualizarBadgesBotonesExcel() {
+        const count = estado.excel.cambiosPendientes.size + estado.excel.idsEliminados.size;
+        const badge = document.getElementById('cambios-pendientes-badge');
+        const btnGuardar = document.getElementById('btn-guardar-excel');
+
+        if (badge && btnGuardar) {
+            if (count > 0) {
+                badge.textContent = `${count} cambio(s) pendiente(s)`;
+                badge.style.display = 'inline-block';
+                btnGuardar.disabled = false;
+                btnGuardar.classList.add('btn-acento');
+            } else {
+                badge.style.display = 'none';
+                btnGuardar.disabled = true;
+            }
+        }
+    },
+
+    async guardarCambiosExcel() {
+        const btnGuardar = document.getElementById('btn-guardar-excel');
+        const originalText = btnGuardar ? btnGuardar.innerHTML : '';
+        if (btnGuardar) {
+            btnGuardar.disabled = true;
+            btnGuardar.innerHTML = '⏳ Guardando...';
+        }
+
+        try {
+            const modificados = Array.from(estado.excel.cambiosPendientes.values());
+            const eliminados = Array.from(estado.excel.idsEliminados);
+
+            // Validar campos obligatorios (nombre de instituciones)
+            const sinNombre = modificados.some(r => !r.nombre || r.nombre.trim() === 'Nueva Institución' || r.nombre.trim() === '');
+            if (sinNombre) {
+                this._toast('Por favor, proporciona un nombre válido para todas las instituciones nuevas/modificadas', 'error');
+                if (btnGuardar) {
+                    btnGuardar.disabled = false;
+                    btnGuardar.innerHTML = originalText;
+                }
+                return;
+            }
+
+            // Llamamos a la función de datos.js para persistir en Supabase
+            await guardarCambiosExcel(modificados, eliminados);
+
+            this._toast('¡Base de datos de Supabase actualizada exitosamente!', 'exito');
+
+            // 1. Recargar datos principales de la app
+            estado.cargando = true;
+            const resultado = await cargarDatos();
+            if (resultado && resultado.instituciones) {
+                estado.instituciones = resultado.instituciones;
+                estado.institucionesFiltradas = [...estado.instituciones];
+            }
+            estado.cargando = false;
+
+            // 2. Reiniciar el panel de administración
+            this.inicializarExcelAdmin();
+            
+            // 3. Actualizar vistas normales de la página
+            this._actualizarEstadisticasInicio();
+            this._llenarSelectInstituciones();
+            this._refrescarVistaActual();
+
+        } catch (error) {
+            console.error('Error al guardar cambios Excel en Supabase:', error);
+            this._toast(`Error al guardar: ${error.message || error}`, 'error');
+            if (btnGuardar) {
+                btnGuardar.disabled = false;
+                btnGuardar.innerHTML = originalText;
+            }
+        }
+    },
+
+    recargarDatosExcel() {
+        const count = estado.excel.cambiosPendientes.size + estado.excel.idsEliminados.size;
+        if (count > 0 && !confirm('Tienes cambios sin guardar en la tabla. ¿Estás seguro de que deseas recargar y perder tus cambios?')) {
+            return;
+        }
+        this.inicializarExcelAdmin();
+        this._toast('Editor Excel recargado desde Supabase', 'info');
+    },
+
+    // ----------------------------------------
+    // MÉTODOS DE LA SUBVISTA CONSULTAS RECIBIDAS
+    // ----------------------------------------
+
+    async cargarConsultasAdminUI() {
+        const cuerpo = document.getElementById('tabla-consultas-cuerpo');
+        if (!cuerpo) return;
+
+        cuerpo.innerHTML = `<tr><td colspan="9" style="text-align:center; padding: 2rem;"><div class="spinner" style="margin:0 auto 10px;"></div>Cargando consultas desde Supabase...</td></tr>`;
+
+        try {
+            const consultas = await cargarConsultasAdmin();
+
+            if (consultas.length === 0) {
+                cuerpo.innerHTML = `<tr><td colspan="9" style="text-align:center; padding: 2rem; color: var(--text-muted);">No has recibido ninguna consulta aún.</td></tr>`;
+                return;
+            }
+
+            cuerpo.innerHTML = consultas.map(c => {
+                const fechaStr = new Date(c.fecha).toLocaleString('es-BO');
+                return `
+                    <tr>
+                        <td style="text-align:center;">
+                            <button class="btn btn-sm" style="background:#fee2e2; color:#ef4444; border:none; padding:4px 8px;" onclick="app.eliminarConsultaUI(${c.id})">🗑️ Borrar</button>
+                        </td>
+                        <td style="white-space:nowrap; font-size:0.82rem;">${fechaStr}</td>
+                        <td style="font-weight:600;">${escapeHtml(c.nombre)}</td>
+                        <td><a href="tel:${c.telefono}" style="color:var(--primary); text-decoration:none;">📞 ${c.telefono}</a></td>
+                        <td>${c.email ? `<a href="mailto:${c.email}" style="color:var(--primary); text-decoration:none;">✉️ ${c.email}</a>` : '—'}</td>
+                        <td style="font-weight:500;">${c.institucion ? escapeHtml(c.institucion) : '—'}</td>
+                        <td>${c.carrera ? escapeHtml(c.carrera) : '—'}</td>
+                        <td style="max-width:250px; font-size:0.85rem; line-height:1.4;">${escapeHtml(c.mensaje)}</td>
+                        <td style="text-align:center; font-weight:700; color:${c.consentimiento ? 'var(--success)' : '#ef4444'}">${c.consentimiento ? 'SÍ' : 'NO'}</td>
+                    </tr>
+                `;
+            }).join('');
+
+        } catch (error) {
+            console.error(error);
+            cuerpo.innerHTML = `<tr><td colspan="9" style="text-align:center; padding: 2rem; color: #ef4444;">Error al cargar las consultas. Verifica tu conexión.</td></tr>`;
+        }
+    },
+
+    async recargarConsultasAdmin() {
+        this.cargarConsultasAdminUI();
+        this._toast('Consultas recargadas desde Supabase', 'info');
+    },
+
+    async eliminarConsultaUI(id) {
+        if (confirm('¿Estás seguro de que deseas eliminar permanentemente esta consulta de la base de datos de Supabase?')) {
+            const exito = await eliminarConsultaAdmin(id);
+            if (exito) {
+                this._toast('Consulta eliminada', 'exito');
+                this.cargarConsultasAdminUI();
+            } else {
+                this._toast('Error al eliminar la consulta', 'error');
+            }
+        }
     },
 
     _debounce(fn, ms) {
@@ -782,6 +1225,30 @@ const app = {
         if (btn) {
             btn.textContent = tema === 'dark' ? '☀️' : '🌙';
             btn.setAttribute('aria-label', tema === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro');
+        }
+    },
+
+    // ----------------------------------------
+    // INDICADOR DE CONEXIÓN
+    // ----------------------------------------
+    _actualizarIndicadorConexion() {
+        const indicador = document.getElementById('conexion-status');
+        if (!indicador) return;
+
+        if (navigator.onLine) {
+            if (typeof hayPendientes === 'function' && hayPendientes()) {
+                indicador.textContent = '🟡 Sincronizando...';
+                indicador.className = 'status-indicator cache';
+            } else if (estado.instituciones && estado.instituciones.length > 0) {
+                indicador.textContent = '🟢 En línea';
+                indicador.className = 'status-indicator';
+            } else {
+                indicador.textContent = '🟢 En línea';
+                indicador.className = 'status-indicator';
+            }
+        } else {
+            indicador.textContent = '🔴 Sin conexión';
+            indicador.className = 'status-indicator offline';
         }
     }
 };
